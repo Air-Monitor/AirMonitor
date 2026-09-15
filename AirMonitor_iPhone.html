@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>AirMonitor</title>
+<style>
+body{margin:0;background:#f5f5f5;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#111}
+header{position:sticky;top:0;background:#fff;border-bottom:1px solid #ddd;padding:14px 16px;z-index:2}
+.title{font-size:20px;font-weight:700}.status{font-size:13px;color:#666;margin-top:4px}
+main{padding:10px 12px 30px}
+.msg{background:#fff;border-radius:12px;padding:12px;margin:8px 0;box-shadow:0 1px 3px #00000012}
+.time{font-size:12px;color:#777;margin-bottom:5px}
+.text{font-size:16px;white-space:pre-wrap;word-break:break-word}
+</style>
+</head>
+<body>
+<header>
+  <div class="title">AirMonitor</div>
+  <div class="status" id="status">Подключение…</div>
+</header>
+<main id="messages"></main>
+
+<script>
+const list=document.getElementById('messages');
+const statusEl=document.getElementById('status');
+let items=[];
+
+function kyivTime(value){
+  const d=new Date(value);
+  if(Number.isNaN(d.getTime())) return value;
+  return new Intl.DateTimeFormat('ru-UA',{
+    timeZone:'Europe/Kyiv',
+    day:'2-digit',month:'2-digit',year:'numeric',
+    hour:'2-digit',minute:'2-digit',second:'2-digit',
+    hour12:false
+  }).format(d);
+}
+
+function render(){
+  list.innerHTML='';
+  items.slice(0,20).forEach(x=>{
+    const el=document.createElement('div');
+    el.className='msg';
+    el.innerHTML='<div class="time">'+kyivTime(x.date)+'</div><div class="text"></div>';
+    el.querySelector('.text').textContent=x.text||'';
+    list.appendChild(el);
+  });
+}
+
+async function load(){
+  try{
+    const r=await fetch('/messages',{cache:'no-store'});
+    items=(await r.json()).reverse();
+    render();
+    statusEl.textContent='Подключено • новые сообщения сверху';
+  }catch(e){
+    statusEl.textContent='Нет связи с сервером';
+  }
+}
+
+function connect(){
+  const es=new EventSource('/stream');
+  es.onopen=()=>statusEl.textContent='Подключено • новые сообщения сверху';
+  es.onmessage=e=>{
+    try{
+      const x=JSON.parse(e.data);
+      items.unshift(x);
+      items=items.slice(0,20);
+      render();
+      if(navigator.vibrate) navigator.vibrate(120);
+    }catch(_){}
+  };
+  es.onerror=()=>statusEl.textContent='Переподключение…';
+}
+
+load();
+connect();
+</script>
+</body>
+</html>
