@@ -233,7 +233,7 @@ function speak(text){
   u.lang='uk-UA';
   u.rate=1;
   u.pitch=1;
-  lastSpeech.textContent='Останнє озвучене:\n'+text;
+  if(lastSpeech) lastSpeech.textContent='Останнє озвучене:\n'+text;
   window.speechSynthesis.speak(u);
 }
 
