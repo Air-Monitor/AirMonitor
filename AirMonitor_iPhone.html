@@ -182,7 +182,9 @@ async function loadOlder(){
 function renderAlerts(data){
   const rows=(data.alerts||[]).slice().sort((a,b)=>{
     if(a.active!==b.active)return a.active?-1:1;
-    return b.date.localeCompare(a.date);
+    const da=Date.parse(a.date||'')||0;
+    const db=Date.parse(b.date||'')||0;
+    return db-da;
   });
   if(!rows.length){
     alertsEl.innerHTML='<div class="alert clear"><div><div class="place">🟢 Активних повітряних тривог немає</div><div class="alerttime">Джерело: Київська ОВА</div></div><div class="badge green">ВІДБІЙ</div></div>';
