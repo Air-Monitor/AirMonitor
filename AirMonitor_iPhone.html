@@ -119,10 +119,14 @@ function showPage(page){
   if(page===2)hintEl.textContent='← Повідомлення';
 }
 
+function formatMessage(text){
+  return text || '';
+}
+
 function renderRadio(){
   if(!items.length){radioMessage.textContent='Очікуємо нове повідомлення…';radioTime.textContent='';return;}
   const x=items[items.length-1];
-  radioMessage.textContent=x.text||'';
+  radioMessage.textContent=formatMessage(x.text||'');
   radioTime.textContent=x.date||'';
 }
 
@@ -137,7 +141,7 @@ function renderMessages(){
     t.textContent=x.date;
     const text=document.createElement('div');
     text.className='text';
-    text.textContent=x.text||'';
+    text.textContent=formatMessage(x.text||'');
     el.append(t,text);
     list.appendChild(el);
   });
