@@ -12,6 +12,7 @@ header{background:#fff;border-bottom:1px solid #ddd;padding:14px 16px 10px;posit
 .title{font-size:20px;font-weight:700}
 .status{font-size:13px;color:#666;margin-top:4px}
 .hint{text-align:center;font-size:12px;color:#888;margin-top:8px}
+.support{display:inline-block;margin-top:8px;background:#111;color:#fff;text-decoration:none;border-radius:9px;padding:7px 12px;font-size:13px;font-weight:600}
 .refresh{height:0;overflow:hidden;text-align:center;color:#777;font-size:13px;transition:height .15s}
 .refresh.show{height:28px;padding-top:7px}
 .viewport{width:100%;height:calc(100vh - 88px);overflow:hidden}
@@ -47,6 +48,7 @@ button{border:0;border-radius:10px;padding:11px 14px;font-size:15px;font-weight:
 <header>
   <div class="title">AirMonitor</div>
   <div class="status" id="status">Підключення…</div>
+  <a class="support" href="https://send.monobank.ua/jar/8wu1Eh8dnF" target="_blank" rel="noopener">Підтримати</a>
   <div class="hint" id="hint">← Радіо · Тривоги →</div>
 </header>
 
@@ -120,7 +122,10 @@ function showPage(page){
 }
 
 function formatMessage(text){
-  return text || '';
+  if(!text) return '';
+  let s = String(text).trim();
+  s = s.replace(/^Ще пуски з\s+/i, 'ЗОНА: пуски з ');
+  return s;
 }
 
 function renderRadio(){
