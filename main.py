@@ -4,7 +4,6 @@ import json
 from datetime import timezone
 from zoneinfo import ZoneInfo
 
-import httpx
 from fastapi import FastAPI, Query
 from fastapi.responses import FileResponse, StreamingResponse, JSONResponse
 from telethon import TelegramClient, events
@@ -14,47 +13,128 @@ app = FastAPI()
 API_ID = int(os.environ["API_ID"])
 API_HASH = os.environ["API_HASH"]
 SESSION = os.environ["TELEGRAM_SESSION"]
-CHANNEL = os.environ.get("CHANNEL", "@kyiv_airdef")
-ALERTS_API_TOKEN = os.environ.get("ALERTS_API_TOKEN", "").strip()
+
+MESSAGE_CHANNEL = os.environ.get("CHANNEL", "@kyiv_airdef")
+ALERT_CHANNEL = os.environ.get("ALERT_CHANNEL", "@kyivoda")
+
 KYIV = ZoneInfo("Europe/Kyiv")
 messages = []
 subscribers = set()
 telegram_client = None
-alerts_cache = []
-alerts_updated_at = None
+
+alerts = {}
+alert_history = []
 
 def format_message(message):
     dt = message.date
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     dt = dt.astimezone(KYIV)
-    return {"id": message.id, "date": dt.strftime("%d.%m.%Y %H:%M:%S"), "text": message.message or ""}
+    return {
+        "id": message.id,
+        "date": dt.strftime("%d.%m.%Y %H:%M:%S"),
+        "text": message.message or ""
+    }
+
+def parse_alert(message):
+    text = (message.message or "").strip()
+    low = text.lower()
+
+    if "повітряна тривога" not in low:
+        return None
+
+    is_end = "відбій" in low
+    is_start = not is_end
+
+    # We intentionally keep this to public alert status only.
+    # No movement/route/target information is extracted.
+    if "київська область" in low or "київщина" in low:
+        place = "Київська область"
+    else:
+        district_markers = [
+            "район -", "район —", "район –", "громада -",
+            "громада —", "громада –"
+        ]
+        place = "Київська область"
+        for marker in district_markers:
+            pos = low.find(marker)
+            if pos > 0:
+                start = max(0, pos - 60)
+                fragment = text[start:pos + len(marker)].strip()
+                # Prefer the text before the marker, keeping it short.
+                words = fragment.split()
+                if len(words) >= 2:
+                    place = " ".join(words[-4:]).strip("—-–: ")
+                break
+
+    dt = message.date
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    dt = dt.astimezone(KYIV)
+
+    return {
+        "id": message.id,
+        "date": dt.strftime("%d.%m.%Y %H:%M:%S"),
+        "place": place,
+        "active": is_start,
+        "text": text
+    }
 
 async def telegram_loop():
     global telegram_client
+
     while True:
         try:
             telegram_client = TelegramClient(StringSession(SESSION), API_ID, API_HASH)
             await telegram_client.start()
-            entity = await telegram_client.get_entity(CHANNEL)
-            history = await telegram_client.get_messages(entity, limit=50)
+
+            msg_entity = await telegram_client.get_entity(MESSAGE_CHANNEL)
+            alert_entity = await telegram_client.get_entity(ALERT_CHANNEL)
+
+            history = await telegram_client.get_messages(msg_entity, limit=50)
             messages.clear()
             for msg in reversed(history):
                 if msg.message:
                     messages.append(format_message(msg))
-            @telegram_client.on(events.NewMessage(chats=entity))
+
+            # Build current alert state from recent official Kyiv OVA posts.
+            alerts.clear()
+            alert_history.clear()
+            alert_msgs = await telegram_client.get_messages(alert_entity, limit=100)
+            for msg in reversed(alert_msgs):
+                item = parse_alert(msg)
+                if not item:
+                    continue
+                alert_history.append(item)
+                alerts[item["place"]] = item["active"]
+
+            @telegram_client.on(events.NewMessage(chats=msg_entity))
             async def new_message(event):
                 if event.message and event.message.message:
                     item = format_message(event.message)
                     messages.append(item)
-                    del messages[:-50]
+                    del messages[:-500]
                     for q in list(subscribers):
                         try:
                             await q.put(item)
                         except Exception:
                             subscribers.discard(q)
-            print(f"Telegram connected: {CHANNEL}", flush=True)
+
+            @telegram_client.on(events.NewMessage(chats=alert_entity))
+            async def new_alert(event):
+                item = parse_alert(event.message)
+                if not item:
+                    return
+                alerts[item["place"]] = item["active"]
+                alert_history.append(item)
+                del alert_history[:-100]
+
+            print(
+                f"Telegram connected: {MESSAGE_CHANNEL}; alerts: {ALERT_CHANNEL}",
+                flush=True
+            )
             await telegram_client.run_until_disconnected()
+
         except Exception as e:
             print(f"Telegram error: {e}", flush=True)
             try:
@@ -65,45 +145,9 @@ async def telegram_loop():
             telegram_client = None
             await asyncio.sleep(10)
 
-async def alerts_loop():
-    global alerts_cache, alerts_updated_at
-    if not ALERTS_API_TOKEN:
-        print("ALERTS_API_TOKEN not set; air-alert block disabled.", flush=True)
-        return
-    url = "https://api.alerts.in.ua/v1/alerts/active.json"
-    while True:
-        try:
-            headers = {"Authorization": f"Bearer {ALERTS_API_TOKEN}"}
-            async with httpx.AsyncClient(timeout=10) as client:
-                r = await client.get(url, headers=headers)
-                r.raise_for_status()
-                data = r.json()
-            result = []
-            for a in data.get("alerts", []):
-                if a.get("alert_type") != "air_raid":
-                    continue
-                if a.get("location_oblast") != "Київська область":
-                    continue
-                result.append({
-                    "id": a.get("id"),
-                    "location_title": a.get("location_title"),
-                    "location_type": a.get("location_type"),
-                    "location_raion": a.get("location_raion"),
-                    "started_at": a.get("started_at"),
-                    "updated_at": a.get("updated_at"),
-                    "alert_level": a.get("alert_level"),
-                })
-            alerts_cache = result
-            from datetime import datetime
-            alerts_updated_at = datetime.now(KYIV).isoformat()
-        except Exception as e:
-            print(f"Alerts API error: {e}", flush=True)
-        await asyncio.sleep(30)
-
 @app.on_event("startup")
 async def startup():
     asyncio.create_task(telegram_loop())
-    asyncio.create_task(alerts_loop())
 
 @app.get("/")
 async def index():
@@ -114,14 +158,19 @@ async def get_messages(limit: int = Query(50, ge=1, le=100)):
     return JSONResponse(messages[-limit:])
 
 @app.get("/history")
-async def get_history(offset_id: int = Query(0, ge=0), limit: int = Query(50, ge=1, le=100)):
+async def get_history(
+    offset_id: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=100)
+):
     if telegram_client is None or not telegram_client.is_connected():
         return JSONResponse([])
+
     try:
-        entity = await telegram_client.get_entity(CHANNEL)
+        entity = await telegram_client.get_entity(MESSAGE_CHANNEL)
         kwargs = {"limit": limit}
         if offset_id:
             kwargs["offset_id"] = offset_id
+
         result = []
         async for msg in telegram_client.iter_messages(entity, **kwargs):
             if msg.message:
@@ -132,12 +181,23 @@ async def get_history(offset_id: int = Query(0, ge=0), limit: int = Query(50, ge
 
 @app.get("/alerts")
 async def get_alerts():
-    return JSONResponse({"enabled": bool(ALERTS_API_TOKEN), "updated_at": alerts_updated_at, "alerts": alerts_cache})
+    active = [
+        {"place": place, "active": state}
+        for place, state in alerts.items()
+        if state
+    ]
+    return JSONResponse({
+        "enabled": True,
+        "source": ALERT_CHANNEL,
+        "alerts": active,
+        "recent": alert_history[-20:]
+    })
 
 @app.get("/stream")
 async def stream():
     q = asyncio.Queue()
     subscribers.add(q)
+
     async def generator():
         try:
             while True:
@@ -147,4 +207,13 @@ async def stream():
             raise
         finally:
             subscribers.discard(q)
-    return StreamingResponse(generator(), media_type="text/event-stream", headers={"Cache-Control":"no-cache","Connection":"keep-alive","X-Accel-Buffering":"no"})
+
+    return StreamingResponse(
+        generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )

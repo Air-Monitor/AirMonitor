@@ -1,15 +1,236 @@
-<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>AirMonitor</title>
-<style>*{box-sizing:border-box}body{margin:0;background:#f5f5f5;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#111}header{position:sticky;top:0;background:#fff;border-bottom:1px solid #ddd;padding:14px 16px;z-index:2}.title{font-size:20px;font-weight:700}.status{font-size:13px;color:#666;margin-top:4px}.section{padding:10px 12px 0}.section-title{font-size:16px;font-weight:700;margin:8px 0}.alert{background:#fff;border-radius:12px;padding:11px 12px;margin:7px 0;box-shadow:0 1px 3px #00000012}.alert.active{border-left:4px solid #d00}.alert .small{font-size:12px;color:#777;margin-top:4px}main{padding:4px 12px 30px}.msg{background:#fff;border-radius:12px;padding:12px;margin:8px 0;box-shadow:0 1px 3px #00000012}.time{font-size:12px;color:#777;margin-bottom:5px}.text{font-size:16px;white-space:pre-wrap;word-break:break-word}.loading{text-align:center;color:#777;font-size:13px;padding:10px}</style></head>
-<body><header><div class="title">AirMonitor</div><div class="status" id="status">Подключение…</div></header><section class="section"><div class="section-title">Воздушные тревоги — Киевская область</div><div id="alerts"><div class="loading">Загрузка…</div></div></section><main id="messages"></main><div id="loading" class="loading" style="display:none">Загружаем старые сообщения…</div><div id="older"></div>
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>AirMonitor</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#f5f5f5;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#111}
+header{position:sticky;top:0;background:#fff;border-bottom:1px solid #ddd;padding:14px 16px;z-index:2}
+.title{font-size:20px;font-weight:700}
+.status{font-size:13px;color:#666;margin-top:4px}
+.section{padding:10px 12px 0}
+.section-title{font-size:16px;font-weight:700;margin:8px 0}
+.alert{background:#fff;border-radius:12px;padding:11px 12px;margin:7px 0;box-shadow:0 1px 3px #00000012}
+.alert.active{border-left:4px solid #d00}
+.alert.clear{border-left:4px solid #159447}
+.alert .small{font-size:12px;color:#777;margin-top:4px}
+main{padding:4px 12px 30px}
+.msg{background:#fff;border-radius:12px;padding:12px;margin:8px 0;box-shadow:0 1px 3px #00000012}
+.time{font-size:12px;color:#777;margin-bottom:5px}
+.text{font-size:16px;white-space:pre-wrap;word-break:break-word}
+.loading{text-align:center;color:#777;font-size:13px;padding:10px}
+.refresh{height:0;overflow:hidden;text-align:center;color:#777;font-size:13px;transition:height .15s}
+.refresh.show{height:28px;padding-top:7px}
+</style>
+</head>
+<body>
+<header>
+  <div class="title">AirMonitor</div>
+  <div class="status" id="status">Подключение…</div>
+</header>
+
+<div id="refresh" class="refresh">Обновление…</div>
+
+<section class="section">
+  <div class="section-title">Воздушные тревоги — Киевская область</div>
+  <div id="alerts"><div class="loading">Загрузка…</div></div>
+</section>
+
+<main id="messages"></main>
+<div id="loading" class="loading" style="display:none">Загружаем старые сообщения…</div>
+<div id="older"></div>
+
 <script>
-const list=document.getElementById('messages'),statusEl=document.getElementById('status'),alertsEl=document.getElementById('alerts'),loadingEl=document.getElementById('loading');let items=[],loadingOlder=false,noMoreHistory=false;
-function render(){list.innerHTML='';items.slice().reverse().forEach(x=>{const el=document.createElement('div');el.className='msg';const t=document.createElement('div');t.className='time';t.textContent=x.date;const text=document.createElement('div');text.className='text';text.textContent=x.text||'';el.append(t,text);list.appendChild(el)})}
-async function loadInitial(){try{const r=await fetch('/messages?limit=50',{cache:'no-store'});items=await r.json();render();statusEl.textContent='Подключено • новые сообщения сверху'}catch(e){statusEl.textContent='Нет связи с сервером'}}
-async function refresh(){await loadInitial();await loadAlerts()}
-async function loadOlder(){if(loadingOlder||noMoreHistory||!items.length)return;loadingOlder=true;loadingEl.style.display='block';const oldHeight=document.documentElement.scrollHeight,oldest=items[0].id;try{const r=await fetch('/history?offset_id='+encodeURIComponent(oldest)+'&limit=50',{cache:'no-store'});const older=await r.json();if(!Array.isArray(older)||!older.length)noMoreHistory=true;else{const existing=new Set(items.map(x=>x.id));const fresh=older.filter(x=>!existing.has(x.id));items=fresh.concat(items);render();const newHeight=document.documentElement.scrollHeight;window.scrollTo(0,window.scrollY+(newHeight-oldHeight))}}catch(e){}finally{loadingOlder=false;loadingEl.style.display='none'}}
-async function loadAlerts(){try{const r=await fetch('/alerts',{cache:'no-store'}),data=await r.json();if(!data.enabled){alertsEl.innerHTML='<div class="alert"><div>Статус тревог пока не подключён</div><div class="small">Нужен API-ключ alerts.in.ua на сервере.</div></div>';return}if(!data.alerts||!data.alerts.length){alertsEl.innerHTML='<div class="alert"><div>🟢 Активных воздушных тревог нет</div></div>';return}alertsEl.innerHTML='';data.alerts.forEach(a=>{const el=document.createElement('div');el.className='alert active';const place=a.location_title||a.location_raion||'Киевская область';el.innerHTML='<div>🔴 '+escapeHtml(place)+'</div>'+(a.location_raion?'<div class="small">'+escapeHtml(a.location_raion)+'</div>':'');alertsEl.appendChild(el)})}catch(e){alertsEl.innerHTML='<div class="alert"><div>Не удалось обновить тревоги</div></div>'}}
-function escapeHtml(s){return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]))}
-function connect(){const es=new EventSource('/stream');es.onopen=()=>statusEl.textContent='Подключено • новые сообщения сверху';es.onmessage=e=>{try{const x=JSON.parse(e.data);if(!items.some(i=>i.id===x.id)){items.push(x);items=items.slice(-500);render();if(navigator.vibrate)navigator.vibrate(120)}}catch(_){} };es.onerror=()=>statusEl.textContent='Переподключение…'}
-let startY=0,pulling=false;window.addEventListener('touchstart',e=>{if(window.scrollY<=0){startY=e.touches[0].clientY;pulling=true}},{passive:true});window.addEventListener('touchend',async e=>{if(!pulling)return;const dy=e.changedTouches[0].clientY-startY;pulling=false;if(dy>70)await refresh()},{passive:true});
-const observer=new IntersectionObserver(entries=>{if(entries[0].isIntersecting)loadOlder()});observer.observe(document.getElementById('older'));loadInitial();loadAlerts();connect();setInterval(loadAlerts,30000);
-</script></body></html>
+const list=document.getElementById('messages');
+const statusEl=document.getElementById('status');
+const alertsEl=document.getElementById('alerts');
+const loadingEl=document.getElementById('loading');
+const refreshEl=document.getElementById('refresh');
+
+let items=[];
+let loadingOlder=false;
+let noMoreHistory=false;
+
+function render(){
+  list.innerHTML='';
+  items.slice().reverse().forEach(x=>{
+    const el=document.createElement('div');
+    el.className='msg';
+
+    const t=document.createElement('div');
+    t.className='time';
+    t.textContent=x.date;
+
+    const text=document.createElement('div');
+    text.className='text';
+    text.textContent=x.text||'';
+
+    el.append(t,text);
+    list.appendChild(el);
+  });
+}
+
+async function loadInitial(){
+  try{
+    const r=await fetch('/messages?limit=50',{cache:'no-store'});
+    const data=await r.json();
+    if(Array.isArray(data)){
+      items=data;
+      render();
+    }
+    statusEl.textContent='Подключено • новые сообщения сверху';
+  }catch(e){
+    statusEl.textContent='Нет связи с сервером';
+  }
+}
+
+async function refresh(){
+  refreshEl.classList.add('show');
+  try{
+    await loadInitial();
+    await loadAlerts();
+    statusEl.textContent='Обновлено • новые сообщения сверху';
+    setTimeout(()=>{statusEl.textContent='Подключено • новые сообщения сверху'},1200);
+  }finally{
+    setTimeout(()=>refreshEl.classList.remove('show'),300);
+  }
+}
+
+async function loadOlder(){
+  if(loadingOlder||noMoreHistory||!items.length)return;
+
+  loadingOlder=true;
+  loadingEl.style.display='block';
+
+  const oldHeight=document.documentElement.scrollHeight;
+  const oldest=items[0].id;
+
+  try{
+    const r=await fetch(
+      '/history?offset_id='+encodeURIComponent(oldest)+'&limit=50',
+      {cache:'no-store'}
+    );
+    const older=await r.json();
+
+    if(!Array.isArray(older)||!older.length){
+      noMoreHistory=true;
+    }else{
+      const existing=new Set(items.map(x=>x.id));
+      const fresh=older.filter(x=>!existing.has(x.id));
+      items=fresh.concat(items);
+      render();
+
+      const newHeight=document.documentElement.scrollHeight;
+      window.scrollTo(0,window.scrollY+(newHeight-oldHeight));
+    }
+  }catch(e){}
+  finally{
+    loadingOlder=false;
+    loadingEl.style.display='none';
+  }
+}
+
+async function loadAlerts(){
+  try{
+    const r=await fetch('/alerts',{cache:'no-store'});
+    const data=await r.json();
+
+    if(!data.enabled){
+      alertsEl.innerHTML='<div class="alert">Тревоги пока недоступны</div>';
+      return;
+    }
+
+    const active=data.alerts||[];
+
+    if(!active.length){
+      alertsEl.innerHTML='<div class="alert clear"><div>🟢 Активных воздушных тревог нет</div><div class="small">Источник: Киевская ОВА</div></div>';
+      return;
+    }
+
+    alertsEl.innerHTML='';
+    active.forEach(a=>{
+      const el=document.createElement('div');
+      el.className='alert active';
+      el.innerHTML='<div>🔴 '+escapeHtml(a.place)+'</div><div class="small">Источник: Киевская ОВА</div>';
+      alertsEl.appendChild(el);
+    });
+  }catch(e){
+    alertsEl.innerHTML='<div class="alert">Не удалось обновить тревоги</div>';
+  }
+}
+
+function escapeHtml(s){
+  return String(s).replace(/[&<>"']/g,m=>({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'
+  }[m]));
+}
+
+function connect(){
+  const es=new EventSource('/stream');
+
+  es.onopen=()=>{
+    statusEl.textContent='Подключено • новые сообщения сверху';
+  };
+
+  es.onmessage=e=>{
+    try{
+      const x=JSON.parse(e.data);
+      if(!items.some(i=>i.id===x.id)){
+        items.push(x);
+        items=items.slice(-500);
+        render();
+        if(navigator.vibrate)navigator.vibrate(120);
+      }
+    }catch(_){}
+  };
+
+  es.onerror=()=>{
+    statusEl.textContent='Переподключение…';
+  };
+}
+
+// Reliable pull-to-refresh on iPhone.
+let startY=0;
+let pulling=false;
+
+window.addEventListener('touchstart',e=>{
+  if(window.scrollY<=5){
+    startY=e.touches[0].clientY;
+    pulling=true;
+  }
+},{passive:true});
+
+window.addEventListener('touchmove',e=>{
+  if(!pulling)return;
+  const dy=e.touches[0].clientY-startY;
+  if(dy>25)refreshEl.classList.add('show');
+},{passive:true});
+
+window.addEventListener('touchend',async e=>{
+  if(!pulling)return;
+
+  const dy=e.changedTouches[0].clientY-startY;
+  pulling=false;
+
+  if(dy>60){
+    await refresh();
+  }else{
+    refreshEl.classList.remove('show');
+  }
+},{passive:true});
+
+const observer=new IntersectionObserver(entries=>{
+  if(entries[0].isIntersecting)loadOlder();
+});
+
+observer.observe(document.getElementById('older'));
+
+loadInitial();
+loadAlerts();
+connect();
+setInterval(loadAlerts,30000);
+</script>
+</body>
+</html>
